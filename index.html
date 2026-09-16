@@ -9,6 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#f7f3ea">
 <title>书画工作台</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'">
 <style>
 /* ============ 设计系统 ============ */
 :root{
@@ -1599,7 +1600,8 @@ function loadProfile(){
   } catch(_){ userProfile = { name:'', avatarId:null, avatarPreset:null }; }
 }
 function saveProfile(){
-  localStorage.setItem('shuhua_profile', JSON.stringify(userProfile));
+  try { localStorage.setItem('shuhua_profile', JSON.stringify(userProfile)); }
+  catch(_){ toast('个人资料保存失败:存储空间可能已满'); }
 }
 
 
@@ -1619,7 +1621,8 @@ function loadCustomSubtypes(){
   } catch(_){ customSubtypes = {}; }
 }
 function saveCustomSubtypes(){
-  localStorage.setItem('shuhua_subtypes', JSON.stringify(customSubtypes));
+  try { localStorage.setItem('shuhua_subtypes', JSON.stringify(customSubtypes)); }
+  catch(_){ toast('子分类保存失败:存储空间可能已满'); }
 }
 function getSubtypes(typeKey){
   if (Object.prototype.hasOwnProperty.call(customSubtypes, typeKey)) return customSubtypes[typeKey] || [];
@@ -1643,7 +1646,8 @@ function loadCustomTypes(){
   } catch(_){ customTypes = []; }
 }
 function saveCustomTypes(){
-  localStorage.setItem('shuhua_custom_types', JSON.stringify(customTypes));
+  try { localStorage.setItem('shuhua_custom_types', JSON.stringify(customTypes)); }
+  catch(_){ toast('自定义类型保存失败:存储空间可能已满'); }
 }
 function getAllTypes(){
   const types = {};
@@ -2474,11 +2478,20 @@ function openFavEditor(fav){
   setupDragDrop(uploader, handleFile);
   $('ff-url').onchange = async e => {
     const url = e.target.value.trim(); if (!url) return;
+    if (!/^https?:\/\//i.test(url)) { toast('URL 必须以 http:// 或 https:// 开头'); return; }
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') { toast('不支持的协议'); return; }
+    } catch(_){ toast('URL 格式无效'); return; }
     try {
       toast('正在加载...');
-      const res = await fetch(url);
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), 20000);
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) throw new Error('HTTP '+res.status);
       const blob = await res.blob();
+      if (blob.size > 10*1024*1024) throw new Error('图片超过 10MB');
       if (!blob.type.startsWith('image/')) throw new Error('非图片类型');
       if (state.editing.imageId) { try { await deleteImage(state.editing.imageId); } catch(_){} }
       state.editing.imageId = await saveImageBlob(blob);
@@ -2727,14 +2740,21 @@ async function importJSON(file){
     }
     if (Array.isArray(data.works)) {
       for (const w of data.works) {
-        if (!w.id || existW.has(w.id)) continue;
-        try { await IDB.add('works', w); addedW++; } catch(_){}
+        if (!w.id || typeof w.id !== 'string' || existW.has(w.id)) continue;
+        if (!w.type || typeof w.type !== 'string') continue;
+        if (typeof w.title !== 'string' && typeof w.title !== 'undefined') continue;
+        const safe = { id: w.id, type: w.type, title: String(w.title||''), content: String(w.content||''), description: String(w.description||''), tags: Array.isArray(w.tags) ? w.tags.filter(t => typeof t === 'string') : [], subtype: typeof w.subtype === 'string' ? w.subtype : '', date: typeof w.date === 'string' ? w.date : '', createdAt: Number(w.createdAt) || Date.now() };
+        if (w.imageId) safe.imageId = w.imageId;
+        try { await IDB.add('works', safe); addedW++; } catch(_){}
       }
     }
     if (Array.isArray(data.favorites)) {
       for (const f of data.favorites) {
-        if (!f.id || existF.has(f.id)) continue;
-        try { await IDB.add('favorites', f); addedF++; } catch(_){}
+        if (!f.id || typeof f.id !== 'string' || existF.has(f.id)) continue;
+        if (!f.type || typeof f.type !== 'string') continue;
+        const safe = { id: f.id, type: f.type, title: String(f.title||''), content: String(f.content||''), source: String(f.source||''), note: String(f.note||''), tags: Array.isArray(f.tags) ? f.tags.filter(t => typeof t === 'string') : [], subtype: typeof f.subtype === 'string' ? f.subtype : '', createdAt: Number(f.createdAt) || Date.now() };
+        if (f.imageId) safe.imageId = f.imageId;
+        try { await IDB.add('favorites', safe); addedF++; } catch(_){}
       }
     }
     renderAll();
@@ -2956,11 +2976,19 @@ function setupPWA(){
 
   if ('serviceWorker' in navigator) {
     const swCode = [
-      "const CACHE='shuhua-v1';",
+      "const CACHE='shuhua-v1-"+Date.now().toString(36)+"';",
       "self.addEventListener('install', e => self.skipWaiting());",
-      "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));",
+      "self.addEventListener('activate', e => {",
+      "  e.waitUntil(",
+      "    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))",
+      "    .then(() => self.clients.claim())",
+      "  );",
+      "});",
       "self.addEventListener('fetch', e => {",
       "  if (e.request.method !== 'GET') return;",
+      "  const u = new URL(e.request.url);",
+      "  if (u.origin !== self.location.origin) return;",
+      "  if (u.pathname.startsWith('/api') || u.pathname.startsWith('/admin')) return;",
       "  e.respondWith(",
       "    caches.open(CACHE).then(c =>",
       "      c.match(e.request).then(r => r || fetch(e.request).then(res => {",
