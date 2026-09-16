@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-title" content="书画工作台">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#f7f3ea">
-<meta name="format-detection" content="telephone=no, email=no, address=no">
 <title>书画工作台</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'">
 <style>
@@ -55,13 +54,13 @@
   --sidebar-w: 264px;
 }
 
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:rgba(168,60,46,.15);touch-action:manipulation}
 html,body{height:100%}
 body{
   background:var(--paper);color:var(--ink);
   font-family:var(--font-song);font-size:15px;line-height:1.75;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-  overflow-x:hidden;display:flex;min-height:100vh;min-height:100dvh;position:relative;
+  overflow-x:hidden;display:flex;min-height:100vh;position:relative;
 }
 @supports(height:100dvh){
   body{min-height:100dvh}
@@ -1120,6 +1119,8 @@ body::after{
 </style>
 </head>
 <body>
+
+<div id="boot-loader" style="position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;z-index:9999;font-family:var(--font-kai);letter-spacing:6px;color:var(--ink-soft);font-size:15px">正在启动……</div>
 
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
@@ -2983,35 +2984,44 @@ function setupPWA(){
   } catch(_){}
 
   if ('serviceWorker' in navigator) {
-    const swCode = [
-      "const CACHE='shuhua-v1-"+Date.now().toString(36)+"';",
-      "self.addEventListener('install', e => self.skipWaiting());",
-      "self.addEventListener('activate', e => {",
-      "  e.waitUntil(",
-      "    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))",
-      "    .then(() => self.clients.claim())",
-      "  );",
-      "});",
-      "self.addEventListener('fetch', e => {",
-      "  if (e.request.method !== 'GET') return;",
-      "  const u = new URL(e.request.url);",
-      "  if (u.origin !== self.location.origin) return;",
-      "  if (u.pathname.startsWith('/api') || u.pathname.startsWith('/admin')) return;",
-      "  e.respondWith(",
-      "    caches.open(CACHE).then(c =>",
-      "      c.match(e.request).then(r => r || fetch(e.request).then(res => {",
-      "        if (res.ok && res.type === 'basic') { try { c.put(e.request, res.clone()); } catch(_){} }",
-      "        return res;",
-      "      }).catch(() => c.match(e.request).then(r => r || new Response('', {status:504}))))",
-      "    )",
-      "  );",
-      "});"
-    ].join('');
+    // 老 iOS Safari 对 blob: URL 注册 SW 支持不完善,先尝试清理旧 SW
     try {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => { try { r.unregister(); } catch(_){} });
+      });
+    } catch(_){}
+    // 检测能力:不支持的旧 WebKit 直接跳过
+    let swSupported = true;
+    try {
+      const swCode = [
+        "const CACHE='shuhua-v1-"+Date.now().toString(36)+"';",
+        "self.addEventListener('install', e => self.skipWaiting());",
+        "self.addEventListener('activate', e => {",
+        "  e.waitUntil(",
+        "    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))",
+        "    .then(() => self.clients.claim())",
+        "  );",
+        "});",
+        "self.addEventListener('fetch', e => {",
+        "  if (e.request.method !== 'GET') return;",
+        "  const u = new URL(e.request.url);",
+        "  if (u.origin !== self.location.origin) return;",
+        "  if (u.pathname.startsWith('/api') || u.pathname.startsWith('/admin')) return;",
+        "  e.respondWith(",
+        "    caches.open(CACHE).then(c =>",
+        "      c.match(e.request).then(r => r || fetch(e.request).then(res => {",
+        "        if (res.ok && res.type === 'basic') { try { c.put(e.request, res.clone()); } catch(_){} }",
+        "        return res;",
+        "      }).catch(() => c.match(e.request).then(r => r || new Response('', {status:504}))))",
+        "    )",
+        "  );",
+        "});"
+      ].join('');
       const blob = new Blob([swCode], { type: 'application/javascript' });
       const swURL = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swURL).catch(() => {});
-    } catch(_){}
+      navigator.serviceWorker.register(swURL).catch(() => { swSupported = false; });
+    } catch(_){ swSupported = false; }
+    void swSupported;
   }
 }
 
@@ -3211,22 +3221,32 @@ function showShortcutsHelp(){
 }
 
 async function boot(){
-  loadCustomTypes();
-  loadCustomSubtypes();
-  loadProfile();
-  $('today-date').textContent = lunarInfo();
-  bind();
-  setupPWA();
-  setupShortcuts();
-  await renderAll();
-  setupToTop();
-  maybeShowOnboard();
+  try { loadCustomTypes(); } catch(_){}
+  try { loadCustomSubtypes(); } catch(_){}
+  try { loadProfile(); } catch(_){}
+  try { $('today-date').textContent = lunarInfo(); } catch(_){}
+  try { bind(); } catch(_){}
+  try { setupPWA(); } catch(_){}
+  try { setupShortcuts(); } catch(_){}
+  try { await renderAll(); } catch(e){ console.error('renderAll', e); }
+  try { setupToTop(); } catch(_){}
+  try { maybeShowOnboard(); } catch(_){}
+  // 启动完成,移除加载提示
+  const loader = document.getElementById('boot-loader');
+  if (loader) loader.remove();
 }
 
 boot().catch(err => {
   console.error('启动失败', err);
-  document.body.innerHTML = '<div style="padding:40px;text-align:center;font-family:serif">'
-    + '<h2>启动失败</h2><p>'+String(err)+'</p></div>';
+  const loader = document.getElementById('boot-loader');
+  if (loader) loader.remove();
+  document.body.innerHTML = '<div style="padding:40px 20px;text-align:center;font-family:serif;color:#1a1614;max-width:480px;margin:60px auto">'
+    + '<div style="font-size:48px;margin-bottom:16px">墨</div>'
+    + '<h2 style="font-weight:500;letter-spacing:4px;margin-bottom:12px">书画工作台</h2>'
+    + '<p style="color:#6b635b;margin-bottom:20px">启动遇到问题</p>'
+    + '<p style="color:#a8a098;font-size:13px;margin-bottom:24px">'+String(err)+'</p>'
+    + '<button onclick="location.reload()" style="padding:10px 24px;background:#a83c2e;color:#fff;border:none;border-radius:2px;font-family:inherit;font-size:14px;letter-spacing:4px;cursor:pointer">重新加载</button>'
+    + '</div>';
 });
 
 })();
