@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="书画工作台">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#f7f3ea">
+<meta name="format-detection" content="telephone=no, email=no, address=no">
 <title>书画工作台</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'">
 <style>
@@ -54,13 +55,16 @@
   --sidebar-w: 264px;
 }
 
-*{box-sizing:border-box;margin:0;padding:0}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 html,body{height:100%}
 body{
   background:var(--paper);color:var(--ink);
   font-family:var(--font-song);font-size:15px;line-height:1.75;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-  overflow-x:hidden;display:flex;min-height:100vh;position:relative;
+  overflow-x:hidden;display:flex;min-height:100vh;min-height:100dvh;position:relative;
+}
+@supports(height:100dvh){
+  body{min-height:100dvh}
 }
 
 /* 宣纸纹理 · 用渐变模拟 */
@@ -92,8 +96,9 @@ body::after{
   background:linear-gradient(180deg,var(--paper-soft) 0%,var(--paper) 100%);
   border-right:1px solid var(--paper-deeper);
   display:flex;flex-direction:column;
-  position:sticky;top:0;height:100vh;overflow-y:auto;flex-shrink:0;z-index:10;
+  position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;flex-shrink:0;z-index:10;
   box-shadow:1px 0 0 rgba(255,255,255,.6) inset;
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
 }
 .sidebar::-webkit-scrollbar{width:4px}
 .sidebar::-webkit-scrollbar-thumb{background:var(--paper-deeper);border-radius:2px}
@@ -195,7 +200,8 @@ body::after{
 .lightbox{
   position:fixed;inset:0;background:rgba(20,16,12,.92);z-index:300;
   display:none;align-items:center;justify-content:center;
-  padding:32px;cursor:zoom-out;backdrop-filter:blur(8px);
+  padding:32px;cursor:zoom-out;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  padding-top:max(32px,env(safe-area-inset-top));padding-bottom:max(32px,env(safe-area-inset-bottom));
 }
 .lightbox.show{display:flex;animation:lb-in .25s ease}
 @keyframes lb-in{from{opacity:0}to{opacity:1}}
@@ -213,21 +219,22 @@ body::after{
   transition:all .2s;
 }
 .lightbox-close:hover{background:rgba(255,255,255,.2);transform:rotate(90deg)}
-.detail-img img,.detail-content img{cursor:zoom-in;transition:transform .25s}
+.detail-img img,.detail-content img{cursor:zoom-in;transition:transform .25s;-webkit-touch-callout:none;-webkit-user-drag:none;user-select:none}
 .detail-img img:hover{transform:scale(1.01)}
 
 /* 首用引导 */
 .onboard-mask{
   position:fixed;inset:0;background:rgba(20,16,12,.6);z-index:150;
   display:none;align-items:center;justify-content:center;padding:24px;
-  backdrop-filter:blur(4px);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
 }
 .onboard-mask.show{display:flex;animation:fade-in .3s}
 .onboard{
   background:var(--paper);width:100%;max-width:540px;
+  max-height:90vh;max-height:90dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;
   border:1px solid var(--paper-deeper);border-radius:2px;
   animation:modal-in .4s cubic-bezier(.16,1,.3,1);
-  overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);
+  box-shadow:0 20px 60px rgba(0,0,0,.25);
 }
 .onboard-hero{
   padding:40px 36px 28px;text-align:center;
@@ -961,14 +968,15 @@ body::after{
 .mobile-toggle:hover{transform:scale(1.05)}
 .sidebar-backdrop{
   display:none;position:fixed;inset:0;background:rgba(20,16,12,.5);z-index:9;
-  backdrop-filter:blur(2px);
+  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
 }
 @media (max-width:860px){
   .mobile-toggle{display:flex}
   .sidebar{
-    position:fixed;left:-300px;top:0;height:100vh;z-index:20;
+    position:fixed;left:-300px;top:0;height:100vh;height:100dvh;z-index:20;
     transition:left .3s cubic-bezier(.16,1,.3,1);
     box-shadow:4px 0 24px rgba(0,0,0,.15);
+    padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
   }
   .sidebar.open{left:0}
   .sidebar-backdrop.open{display:block;animation:fade-in .2s}
@@ -3113,6 +3121,16 @@ function setupDragDrop(uploader, onFile){
     if (f && f.type.startsWith('image/')) onFile(f);
     else toast('请拖入图片文件');
   });
+  // iOS/Safari 提示：拖拽在这些浏览器不可用，但点击仍可唤起文件选择
+  const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (isTouch && !uploader.querySelector('.touch-hint')) {
+    const hint = document.createElement('div');
+    hint.className = 'touch-hint';
+    hint.style.cssText = 'position:absolute;bottom:6px;right:8px;font-size:10px;color:var(--ink-faint);opacity:.6;pointer-events:none';
+    hint.textContent = '点击上传';
+    uploader.style.position = 'relative';
+    uploader.appendChild(hint);
+  }
 }
 
 function maybeShowOnboard(){
