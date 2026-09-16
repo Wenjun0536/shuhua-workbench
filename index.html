@@ -1120,8 +1120,6 @@ body::after{
 </head>
 <body>
 
-<div id="boot-loader" style="position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;z-index:9999;font-family:var(--font-kai);letter-spacing:6px;color:var(--ink-soft);font-size:15px">正在启动……</div>
-
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
     <div class="avatar-wrap" id="sb-avatar-wrap" title="点击设置头像与用户名">
@@ -2095,9 +2093,9 @@ function cardHTML(it, kind){
     + '</div></div>';
 }
 
-async function renderWorks(){
+async function renderWorks(prefetched){
   const grid = $('works-grid'), empty = $('works-empty');
-  let items = await IDB.getAll('works');
+  let items = prefetched || await IDB.getAll('works');
   items.sort((a,b) => b.createdAt - a.createdAt);
   if (state.filter) items = items.filter(it => it.type === state.filter);
   if (state.tagFilter) items = items.filter(it => (it.tags||[]).includes(state.tagFilter));
@@ -2117,9 +2115,9 @@ async function renderWorks(){
   grid.innerHTML = items.map(it => cardHTML(it, 'work')).join('');
 }
 
-async function renderFavorites(){
+async function renderFavorites(prefetched){
   const grid = $('favorites-grid'), empty = $('favorites-empty');
-  let items = await IDB.getAll('favorites');
+  let items = prefetched || await IDB.getAll('favorites');
   items.sort((a,b) => b.savedAt - a.savedAt);
   if (state.favFilter) items = items.filter(it => it.type === state.favFilter);
   if (state.favTagFilter) items = items.filter(it => (it.tags||[]).includes(state.favTagFilter));
@@ -2206,9 +2204,9 @@ function renderHeatmap(works){
     + '</div>';
 }
 
-async function renderDashboard(){
-  const works = await IDB.getAll('works');
-  const favs = await IDB.getAll('favorites');
+async function renderDashboard(prefetchedWorks, prefetchedFavs){
+  const works = prefetchedWorks || await IDB.getAll('works');
+  const favs = prefetchedFavs || await IDB.getAll('favorites');
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const thisMonth = works.filter(w => w.createdAt >= monthStart).length;
@@ -2296,18 +2294,14 @@ async function renderAll(){
   renderQuickAdd();
   renderTypeFilters('type-filters');
   renderTypeFilters('fav-filters');
-  // 标签筛选下拉
+  // 一次查询复用结果,避免 4 次串行 IDB 事务
   const works = await IDB.getAll('works');
   const favs = await IDB.getAll('favorites');
   renderTagFilter('tag-filter', works);
   renderTagFilter('fav-tag-filter', favs);
-  renderWorks(); renderFavorites(); renderDashboard(); renderSettings();
-  try {
-    const works = await IDB.getAll('works');
-    const favs = await IDB.getAll('favorites');
-    const bw = $('badge-works'); if (bw) { bw.textContent = works.length; bw.style.display = works.length ? '' : 'none'; }
-    const bf = $('badge-favs'); if (bf) { bf.textContent = favs.length; bf.style.display = favs.length ? '' : 'none'; }
-  } catch(_){}
+  renderWorks(works); renderFavorites(favs); renderDashboard(works, favs); renderSettings();
+  const bw = $('badge-works'); if (bw) { bw.textContent = works.length; bw.style.display = works.length ? '' : 'none'; }
+  const bf = $('badge-favs'); if (bf) { bf.textContent = favs.length; bf.style.display = favs.length ? '' : 'none'; }
 }
 
 function getSubtypeOptionsHtml(typeKey, selectedSub){
@@ -3228,25 +3222,14 @@ async function boot(){
   try { bind(); } catch(_){}
   try { setupPWA(); } catch(_){}
   try { setupShortcuts(); } catch(_){}
-  try { await renderAll(); } catch(e){ console.error('renderAll', e); }
+  // 关键路径:任何错误都不能阻止应用显示
+  renderAll().catch(e => console.error('renderAll', e));
   try { setupToTop(); } catch(_){}
   try { maybeShowOnboard(); } catch(_){}
-  // 启动完成,移除加载提示
-  const loader = document.getElementById('boot-loader');
-  if (loader) loader.remove();
 }
 
 boot().catch(err => {
   console.error('启动失败', err);
-  const loader = document.getElementById('boot-loader');
-  if (loader) loader.remove();
-  document.body.innerHTML = '<div style="padding:40px 20px;text-align:center;font-family:serif;color:#1a1614;max-width:480px;margin:60px auto">'
-    + '<div style="font-size:48px;margin-bottom:16px">墨</div>'
-    + '<h2 style="font-weight:500;letter-spacing:4px;margin-bottom:12px">书画工作台</h2>'
-    + '<p style="color:#6b635b;margin-bottom:20px">启动遇到问题</p>'
-    + '<p style="color:#a8a098;font-size:13px;margin-bottom:24px">'+String(err)+'</p>'
-    + '<button onclick="location.reload()" style="padding:10px 24px;background:#a83c2e;color:#fff;border:none;border-radius:2px;font-family:inherit;font-size:14px;letter-spacing:4px;cursor:pointer">重新加载</button>'
-    + '</div>';
 });
 
 })();
