@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -2977,44 +2980,15 @@ function setupPWA(){
   } catch(_){}
 
   if ('serviceWorker' in navigator) {
-    // 老 iOS Safari 对 blob: URL 注册 SW 支持不完善,先尝试清理旧 SW
+    // 清理可能存在的旧 SW(之前的缓存可能造成白屏),不再注册新的
     try {
       navigator.serviceWorker.getRegistrations().then(regs => {
         regs.forEach(r => { try { r.unregister(); } catch(_){} });
       });
+      if (window.caches) {
+        caches.keys().then(keys => keys.forEach(k => caches.delete(k).catch(()=>{})));
+      }
     } catch(_){}
-    // 检测能力:不支持的旧 WebKit 直接跳过
-    let swSupported = true;
-    try {
-      const swCode = [
-        "const CACHE='shuhua-v1-"+Date.now().toString(36)+"';",
-        "self.addEventListener('install', e => self.skipWaiting());",
-        "self.addEventListener('activate', e => {",
-        "  e.waitUntil(",
-        "    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))",
-        "    .then(() => self.clients.claim())",
-        "  );",
-        "});",
-        "self.addEventListener('fetch', e => {",
-        "  if (e.request.method !== 'GET') return;",
-        "  const u = new URL(e.request.url);",
-        "  if (u.origin !== self.location.origin) return;",
-        "  if (u.pathname.startsWith('/api') || u.pathname.startsWith('/admin')) return;",
-        "  e.respondWith(",
-        "    caches.open(CACHE).then(c =>",
-        "      c.match(e.request).then(r => r || fetch(e.request).then(res => {",
-        "        if (res.ok && res.type === 'basic') { try { c.put(e.request, res.clone()); } catch(_){} }",
-        "        return res;",
-        "      }).catch(() => c.match(e.request).then(r => r || new Response('', {status:504}))))",
-        "    )",
-        "  );",
-        "});"
-      ].join('');
-      const blob = new Blob([swCode], { type: 'application/javascript' });
-      const swURL = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swURL).catch(() => { swSupported = false; });
-    } catch(_){ swSupported = false; }
-    void swSupported;
   }
 }
 
